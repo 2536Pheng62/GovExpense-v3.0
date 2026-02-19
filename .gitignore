@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+temp_venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Output PDF
+GovExpense_Request.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & test files
+*.log
+error_log.txt
+assets_log.txt
+sprite_log.txt
+success_log.txt
+import_test.txt
+pdf_test_log.txt
+pdf_test_log_v2.txt
+sys_path.txt
+pip_list.txt
+
+# Batch files
+*.bat
+
+# Old/backup files
+*.bak
+
+# Test files
+tests/
+test_*.py
+analyze_*.py
+create_dummy_sprite.py
+debug_env.py
+
+# cloud-run-mcp (unrelated)
+cloud-run-mcp/
+
+# Old app (replaced by app.py wizard)
+app_streamlit.py

@@ -1,0 +1,6 @@
+# GovExpense — Thai Government Travel Expense Calculator
+# Requirements for Streamlit Cloud deployment
+
+streamlit>=1.28.0
+reportlab>=4.0
+pandas>=2.0
