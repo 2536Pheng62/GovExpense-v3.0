@@ -160,9 +160,9 @@ DEFAULTS = {
     "is_overnight": True,
     "provided_meals": 0,
     "order_no": "",
-    "order_date": "",
+    "order_date": date.today(),
     "loan_no": "",
-    "loan_date": "",
+    "loan_date": date.today(),
     # Step 2 — Accommodation
     "trip_type": "general",
     "training_venue": "private",
@@ -298,7 +298,8 @@ def step_trip_info():
         st.session_state.province = st.selectbox("จังหวัดปลายทาง", THAI_PROVINCES, index=idx)
     with c2:
         st.session_state.order_no = st.text_input("เลขที่คำสั่ง", st.session_state.order_no)
-        st.session_state.order_date = st.text_input("ลงวันที่คำสั่ง", st.session_state.order_date)
+        st.session_state.order_date = st.date_input("ลงวันที่คำสั่ง", st.session_state.order_date)
+        st.caption(f"📅 {thai_date(st.session_state.order_date, 'long')}")
 
     st.markdown("---")
 
@@ -350,7 +351,8 @@ def step_trip_info():
     with c1:
         st.session_state.loan_no = st.text_input("สัญญาเงินยืมเลขที่", st.session_state.loan_no)
     with c2:
-        st.session_state.loan_date = st.text_input("ลงวันที่ (เช่น 1 ม.ค. 2568)", st.session_state.loan_date)
+        st.session_state.loan_date = st.date_input("ลงวันที่สัญญาเงินยืม", st.session_state.loan_date)
+        st.caption(f"📅 {thai_date(st.session_state.loan_date, 'long')}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -638,10 +640,10 @@ def step_summary():
                     "is_overnight": st.session_state.is_overnight,
                     "provided_meals": st.session_state.provided_meals,
                     "order_no": st.session_state.order_no,
-                    "order_date": st.session_state.order_date,
+                    "order_date": thai_date(st.session_state.order_date, 'long'),
                 },
                 "loan_contract_no": st.session_state.loan_no,
-                "loan_date": st.session_state.loan_date,
+                "loan_date": thai_date(st.session_state.loan_date, 'long'),
                 "expenses": {
                     "per_diem": per_diem_res,
                     "accommodation": accom_res,
