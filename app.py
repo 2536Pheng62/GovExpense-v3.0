@@ -16,6 +16,10 @@ from expense_calculator import ExpenseCalculator
 from pdf_generator import GovDocumentGenerator
 from pdf_preview import render_pdf_preview
 from distance_utils import calculate_road_distance
+from database import GovExpenseDB
+
+# Initialize DB
+db = GovExpenseDB()
 
 # =====================================================================
 # PAGE CONFIG
@@ -281,6 +285,21 @@ def nav_buttons(back=True, next_label="ถัดไป ➡️", next_step=None, 
 def step_trip_info():
     st.markdown('<div class="card"><div class="card-title">📅 ข้อมูลการเดินทาง</div>', unsafe_allow_html=True)
 
+    # --- โปรไฟล์เดิม ---
+    profiles = db.get_all_profiles()
+    if profiles:
+        with st.expander("👤 ดึงข้อมูลจากโปรไฟล์ที่เคยบันทึกไว้"):
+            profile_names = [p[0] for p in profiles]
+            selected_p = st.selectbox("เลือกโปรไฟล์", ["-- เลือกโปรไฟล์ --"] + profile_names)
+            if selected_p != "-- เลือกโปรไฟล์ --":
+                p_data = next(p for p in profiles if p[0] == selected_p)
+                st.session_state.full_name = p_data[0]
+                st.session_state.position = p_data[1]
+                st.session_state.c_level = p_data[2]
+                st.session_state.department = p_data[3]
+                st.success(f"โหลดข้อมูลของ {selected_p} เรียบร้อย!")
+                # Small delay or rerun could be added here if needed to refresh fields immediately
+
     # --- ผู้เดินทาง ---
     st.markdown("##### 👤 ข้อมูลผู้เดินทาง")
     c1, c2 = st.columns(2)
@@ -293,6 +312,15 @@ def step_trip_info():
             index=0 if st.session_state.c_level == "C1-C8" else 1,
         )
         st.session_state.department = st.text_input("สังกัด", st.session_state.department)
+    
+    if st.button("💾 บันทึกโปรไฟล์นี้ไว้ใช้งานครั้งหน้า"):
+        db.save_profile(
+            st.session_state.full_name,
+            st.session_state.position,
+            st.session_state.c_level,
+            st.session_state.department
+        )
+        st.toast("บันทึกโปรไฟล์เรียบร้อย!", icon="✅")
 
     st.markdown("---")
 
@@ -725,65 +753,96 @@ def step_summary():
     </div>
     """, unsafe_allow_html=True)
 
-    # --- สร้าง PDF ---
-    st.markdown("### 📤 สร้างเอกสาร PDF")
+    # --- สร้าง PDF & Excel ---
+    st.markdown("### 📤 ส่งออกข้อมูล")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📄 สร้างไฟล์ PDF", type="primary", use_container_width=True):
+            with st.spinner("กำลังสร้างเอกสาร PDF..."):
+                transaction_data = {
+                    "transaction_id": f"TX-{int(datetime.now().timestamp())}",
+                    "traveler_info": {
+                        "full_name": st.session_state.full_name,
+                        "position_title": st.session_state.position,
+                        "c_level": st.session_state.c_level,
+                        "department": st.session_state.department,
+                    },
+                    "trip_info": {
+                        "purpose": st.session_state.purpose,
+                        "destination_province": st.session_state.province,
+                        "start_time": start_dt.isoformat(),
+                        "end_time": end_dt.isoformat(),
+                        "is_overnight": st.session_state.is_overnight,
+                        "provided_meals": st.session_state.provided_meals,
+                        "order_no": st.session_state.order_no,
+                        "order_date": thai_date(st.session_state.order_date, 'long'),
+                    },
+                    "loan_contract_no": st.session_state.loan_no,
+                    "loan_date": thai_date(st.session_state.loan_date, 'long'),
+                    "expenses": {
+                        "per_diem": per_diem_res,
+                        "accommodation": accom_res,
+                        "transportation": st.session_state.transport_items,
+                    },
+                }
 
-    if st.button("📄 สร้างไฟล์ PDF", type="primary", use_container_width=True):
-        with st.spinner("กำลังสร้างเอกสาร PDF..."):
-            transaction_data = {
-                "transaction_id": f"TX-{int(datetime.now().timestamp())}",
-                "traveler_info": {
-                    "full_name": st.session_state.full_name,
-                    "position_title": st.session_state.position,
-                    "c_level": st.session_state.c_level,
-                    "department": st.session_state.department,
-                },
-                "trip_info": {
-                    "purpose": st.session_state.purpose,
-                    "destination_province": st.session_state.province,
-                    "start_time": start_dt.isoformat(),
-                    "end_time": end_dt.isoformat(),
-                    "is_overnight": st.session_state.is_overnight,
-                    "provided_meals": st.session_state.provided_meals,
-                    "order_no": st.session_state.order_no,
-                    "order_date": thai_date(st.session_state.order_date, 'long'),
-                },
-                "loan_contract_no": st.session_state.loan_no,
-                "loan_date": thai_date(st.session_state.loan_date, 'long'),
-                "expenses": {
-                    "per_diem": per_diem_res,
-                    "accommodation": accom_res,
-                    "transportation": st.session_state.transport_items,
-                },
+                try:
+                    gen = GovDocumentGenerator()
+                    output_file = "GovExpense_Request.pdf"
+                    gen.generate(transaction_data, output_file)
+
+                    with open(output_file, "rb") as f:
+                        pdf_bytes = f.read()
+
+                    st.success("✅ สร้างไฟล์ PDF สำเร็จ!")
+
+                    now = datetime.now()
+                    fname = f"GovExpense_{now.year + 543}{now.strftime('%m%d')}.pdf"
+                    st.download_button(
+                        "⬇️ ดาวน์โหลดไฟล์ PDF",
+                        data=pdf_bytes,
+                        file_name=fname,
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True,
+                    )
+
+                    st.markdown("---")
+                    st.markdown("### 🔍 ตัวอย่างเอกสาร")
+                    render_pdf_preview(pdf_bytes, height=850, page_scale=1.3)
+
+                except Exception as e:
+                    st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+                    st.info("ตรวจสอบว่ามีไฟล์ฟอนต์ TH Sarabun New อยู่ใน assets/fonts/")
+
+    with c2:
+        if st.button("📊 ส่งออกเป็น Excel (CSV)", use_container_width=True):
+            import pandas as pd
+            # Prepare data for CSV
+            data = {
+                "รายการ": ["ค่าเบี้ยเลี้ยง", "ค่าที่พัก", "ค่าพาหนะ"],
+                "จำนวนเงิน (บาท)": [
+                    per_diem_res['net_amount'],
+                    accom_res['reimbursable_amount'],
+                    total_trans
+                ]
             }
-
-            try:
-                gen = GovDocumentGenerator()
-                output_file = "GovExpense_Request.pdf"
-                gen.generate(transaction_data, output_file)
-
-                with open(output_file, "rb") as f:
-                    pdf_bytes = f.read()
-
-                st.success("✅ สร้างไฟล์ PDF สำเร็จ!")
-
-                now = datetime.now()
-                fname = f"GovExpense_{now.year + 543}{now.strftime('%m%d')}.pdf"
-                st.download_button(
-                    "⬇️ ดาวน์โหลดไฟล์ PDF",
-                    data=pdf_bytes,
-                    file_name=fname,
-                    mime="application/pdf",
-                    type="primary",
-                )
-
-                st.markdown("---")
-                st.markdown("### 🔍 ตัวอย่างเอกสาร")
-                render_pdf_preview(pdf_bytes, height=850, page_scale=1.3)
-
-            except Exception as e:
-                st.error(f"❌ เกิดข้อผิดพลาด: {e}")
-                st.info("ตรวจสอบว่ามีไฟล์ฟอนต์ TH Sarabun New อยู่ใน assets/fonts/")
+            if meal_budget > 0:
+                data["รายการ"].append("งบอาหารฝึกอบรม")
+                data["จำนวนเงิน (บาท)"].append(meal_budget)
+            
+            df = pd.DataFrame(data)
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            
+            st.success("✅ เตรียมข้อมูล Excel สำเร็จ!")
+            st.download_button(
+                "⬇️ ดาวน์โหลดไฟล์ Excel (CSV)",
+                data=csv,
+                file_name=f"Summary_{st.session_state.full_name}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
     # --- Navigation ---
     st.markdown("<br>", unsafe_allow_html=True)
