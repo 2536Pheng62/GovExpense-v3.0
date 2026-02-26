@@ -62,6 +62,10 @@ The application will open in your default web browser (usually at `http://localh
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
+## Developer 👨‍💻
+
+*   **วศ.ธงชาติ อำแดงพิน**
+
 ## License 📄
 
 [MIT](https://choosealicense.com/licenses/mit/)
