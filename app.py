@@ -15,6 +15,7 @@ import os
 from expense_calculator import ExpenseCalculator
 from pdf_generator import GovDocumentGenerator
 from pdf_preview import render_pdf_preview
+from distance_utils import calculate_road_distance
 
 # =====================================================================
 # PAGE CONFIG
@@ -171,8 +172,14 @@ DEFAULTS = {
     "actual_cost": 0.0,
     "manual_rate": 800,
     "nights": 0,
+    "training_meals": 0,
+    "training_snacks": 0,
     # Step 3 — Transport
+    "transport_origin": "",
+    "transport_dest": "",
     "transport_items": [],
+    "tmp_dist": 0.0,
+    "tmp_taxi_fare": 0.0,
     # Results (computed at step 4)
     "per_diem_res": None,
     "accom_res": None,
@@ -336,7 +343,13 @@ def step_trip_info():
     st.markdown("##### 🍽️ ข้อมูลเบี้ยเลี้ยง")
     c1, c2 = st.columns(2)
     with c1:
-        st.session_state.is_overnight = st.checkbox("พักค้างคืน", value=st.session_state.is_overnight)
+        overnight_type = st.radio(
+            "ลักษณะการเดินทาง",
+            ["พักค้างคืน (ค้างแรม)", "ไป-กลับ (ไม่พักค้างคืน)"],
+            index=0 if st.session_state.is_overnight else 1,
+            horizontal=True
+        )
+        st.session_state.is_overnight = (overnight_type == "พักค้างคืน (ค้างแรม)")
     with c2:
         st.session_state.provided_meals = st.number_input(
             "มื้ออาหารที่รัฐจัดให้", 0, 10, st.session_state.provided_meals,
@@ -391,7 +404,15 @@ def step_accommodation():
 
     # --- วิธีเบิก ---
     method_options = ["เหมาจ่าย (Lump Sum)", "จ่ายจริง (Actual)", "พักบนยานพาหนะ/ไม่มีค่าที่พัก"]
-    method_idx = {"lump_sum": 0, "actual": 1, "vehicle_sleep": 2}.get(st.session_state.accom_method, 0)
+    
+    # Auto-select 'no cost' if not overnight
+    if not st.session_state.is_overnight:
+        st.session_state.accom_method = "vehicle_sleep"
+        st.session_state.nights = 0
+        method_idx = 2
+    else:
+        method_idx = {"lump_sum": 0, "actual": 1, "vehicle_sleep": 2}.get(st.session_state.accom_method, 0)
+    
     method_label = st.radio("รูปแบบการเบิก", method_options, index=method_idx, horizontal=True)
     if "เหมาจ่าย" in method_label:
         st.session_state.accom_method = "lump_sum"
@@ -452,6 +473,30 @@ def step_accommodation():
         st.warning(w, icon="⚠️")
     st.metric("เบิกค่าที่พักได้", f"{accom_res['reimbursable_amount']:,.2f} บาท")
 
+    # --- Training Meals ---
+    if st.session_state.trip_type == "training":
+        st.markdown("---")
+        st.markdown("##### 🍽️ งบประมาณค่าอาหาร (สำหรับจัดฝึกอบรม)")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.session_state.training_meals = st.number_input("จำนวนมื้ออาหารหลัก", 0, 50, st.session_state.training_meals)
+        with c2:
+            st.session_state.training_snacks = st.number_input("จำนวนมื้ออาหารว่าง", 0, 100, st.session_state.training_snacks)
+            
+        meal_res = calc.calculate_training_meal_allowance(
+            st.session_state.c_level,
+            st.session_state.training_venue,
+            st.session_state.training_meals,
+            st.session_state.training_snacks
+        )
+        st.session_state.training_meal_res = meal_res
+        st.info(
+            f"📋 อัตราเพดาน: อาหาร {meal_res['meal_rate']} ฿/มื้อ | ว่าง {meal_res['snack_rate']} ฿/มื้อ\n\n"
+            f"**รวมวงเงินงบประมาณ: {meal_res['grand_total']:,.2f} บาท**"
+        )
+    else:
+        st.session_state.training_meal_res = None
+
     st.markdown('</div>', unsafe_allow_html=True)
     nav_buttons(back=True, next_label="ถัดไป: ค่าพาหนะ ➡️", next_step=3, back_step=1)
 
@@ -473,24 +518,55 @@ def step_transport():
         t_dist = 0.0
         t_cost = 0.0
         if t_key in ("private_car", "motorcycle"):
-            t_dist = st.number_input("ระยะทาง (กม.)", 0.0, step=1.0)
+            # UI for Smart Distance
+            with st.expander("📍 คำนวณระยะทางอัตโนมัติ"):
+                # Use department and province as defaults if not set
+                d_orig = st.session_state.get("transport_origin") or st.session_state.department
+                d_dest = st.session_state.get("transport_dest") or st.session_state.province
+                
+                c_orig = st.text_input("ต้นทาง", d_orig, key="smart_orig")
+                c_dest = st.text_input("ปลายทาง", d_dest, key="smart_dest")
+                
+                if st.button("🔍 คำนวณระยะทาง"):
+                    with st.spinner("กำลังค้นหาเส้นทาง..."):
+                        res = calculate_road_distance(c_orig, c_dest)
+                        if res["error"]:
+                            st.error(res["error"])
+                        else:
+                            st.session_state.transport_origin = c_orig
+                            st.session_state.transport_dest = c_dest
+                            st.session_state["tmp_dist"] = res["distance"]
+                            st.success(f"ระยะทาง: {res['distance']} กม.")
+                            st.rerun()
+            
+            # Use calculated distance if available
+            val_dist = st.session_state.get("tmp_dist", 0.0)
+            t_dist = st.number_input("ระยะทาง (กม.)", 0.0, step=1.0, value=float(val_dist))
             rate = 4 if t_key == "private_car" else 2
             st.caption(f"อัตราชดเชย: {rate} บาท/กม.")
         elif t_key == "taxi":
             st.info("💡 ระบุค่าโดยสารที่ต้องการเบิก")
-            t_cost = st.number_input("ค่าโดยสาร (บาท)", 0.0, step=10.0)
+            # Get value from session state if set by taxi calc
+            val_taxi = st.session_state.get("tmp_taxi_fare", 0.0)
+            t_cost = st.number_input("ค่าโดยสาร (บาท)", 0.0, step=10.0, value=float(val_taxi))
         else:
             t_cost = st.number_input("ค่าโดยสารตามตั๋ว/ใบเสร็จ (บาท)", 0.0, step=10.0)
 
-    # Taxi meter estimator
+    # Taxi meter calculator
     if t_key == "taxi":
-        with st.expander("🚖 เครื่องคำนวณมิเตอร์ (ช่วยประเมิน)"):
+        with st.expander("🚖 เครื่องคำนวณมิเตอร์"):
             tm_dist = st.number_input("ระยะทาง (กม.)", 0.0, step=1.0, key="tm_d")
             tm_traffic = st.number_input("เวลารถติด (นาที)", 0, step=5, key="tm_t")
             tm_booking = st.checkbox("เรียกผ่านแอป (+20 บาท)")
             tm_airport = st.checkbox("รถจอดสนามบิน (+50 บาท)")
             tm_res = calc.calculate_taxi_meter(tm_dist, tm_traffic, tm_booking, tm_airport)
-            st.success(f"ประเมินค่ามิเตอร์: **{tm_res['total_fare']:,.2f} บาท**")
+            
+            fare_total = tm_res['total_fare']
+            st.success(f"ค่ามิเตอร์รวม: **{fare_total:,.2f} บาท**")
+            
+            if st.button("ตกลง (OK) — ใช้ยอดเงินนี้", type="secondary"):
+                st.session_state["tmp_taxi_fare"] = fare_total
+                st.rerun()
 
     if st.button("➕ เพิ่มรายการ", type="primary"):
         if not t_desc:
@@ -508,6 +584,10 @@ def step_transport():
                 "cost_input": t_cost,
                 "reimbursable_amount": reimbursable,
             })
+            if "tmp_dist" in st.session_state:
+                del st.session_state["tmp_dist"]
+            if "tmp_taxi_fare" in st.session_state:
+                del st.session_state["tmp_taxi_fare"]
             st.rerun()
 
     # --- รายการที่บันทึกแล้ว ---
@@ -581,16 +661,32 @@ def step_summary():
 
     accom_res = st.session_state.accom_res
     total_trans = sum(it["reimbursable_amount"] for it in st.session_state.transport_items)
-    grand_total = per_diem_res["net_amount"] + accom_res["reimbursable_amount"] + total_trans
+    
+    # Training Budget
+    meal_budget = 0.0
+    if st.session_state.trip_type == "training" and st.session_state.get("training_meal_res"):
+        meal_budget = st.session_state.training_meal_res["grand_total"]
+
+    grand_total = per_diem_res["net_amount"] + accom_res["reimbursable_amount"] + total_trans + meal_budget
 
     # --- แสดงยอดรวม ---
     st.markdown('<div class="card"><div class="card-title">📄 สรุปค่าใช้จ่าย</div>', unsafe_allow_html=True)
 
+    # Metric Row
+    cols_count = 4 if meal_budget > 0 else 3
+    metrics = [
+        {"label": "ค่าเบี้ยเลี้ยง", "value": f"{per_diem_res['net_amount']:,.2f} ฿"},
+        {"label": "ค่าที่พัก", "value": f"{accom_res['reimbursable_amount']:,.2f} ฿"},
+        {"label": "ค่าพาหนะ", "value": f"{total_trans:,.2f} ฿"},
+    ]
+    if meal_budget > 0:
+        metrics.append({"label": "งบอาหารอบรม", "value": f"{meal_budget:,.2f} ฿"})
+
+    metric_html = "".join([f'<div class="metric-box"><div class="label">{m["label"]}</div><div class="value">{m["value"]}</div></div>' for m in metrics])
+    
     st.markdown(f"""
     <div class="metric-row">
-        <div class="metric-box"><div class="label">ค่าเบี้ยเลี้ยง</div><div class="value">{per_diem_res['net_amount']:,.2f} ฿</div></div>
-        <div class="metric-box"><div class="label">ค่าที่พัก</div><div class="value">{accom_res['reimbursable_amount']:,.2f} ฿</div></div>
-        <div class="metric-box"><div class="label">ค่าพาหนะ</div><div class="value">{total_trans:,.2f} ฿</div></div>
+        {metric_html}
     </div>
     <div class="summary-total"><h1>รวมทั้งสิ้น {grand_total:,.2f} บาท</h1></div>
     """, unsafe_allow_html=True)
@@ -600,9 +696,19 @@ def step_summary():
         st.write(f"**ผู้เดินทาง:** {st.session_state.full_name} ({st.session_state.position})")
         st.write(f"**ระดับ:** {st.session_state.c_level} | **สังกัด:** {st.session_state.department}")
         st.write(f"**จังหวัด:** {st.session_state.province} | **วัตถุประสงค์:** {st.session_state.purpose}")
-        st.write(f"**เดินทาง:** {thai_date(start_dt, 'long')} → {thai_date(end_dt, 'long')}")
-        st.write(f"**เบี้ยเลี้ยง:** {per_diem_res['days_count']} วัน x {per_diem_res['rate_per_day']} บาท, หักมื้อ {per_diem_res['provided_meals']}")
+        st.write(f"**เดินทาง:** {thai_date(start_dt, 'long')} {st.session_state.start_time.strftime('%H:%M')} น. → {thai_date(end_dt, 'long')} {st.session_state.end_time.strftime('%H:%M')} น.")
+        
+        # Calculate raw duration
+        dur = end_dt - start_dt
+        d, h, m = dur.days, dur.seconds // 3600, (dur.seconds % 3600) // 60
+        st.write(f"**ระยะเวลาเดินทางจริง:** {f'{d} วัน ' if d > 0 else ''}{h} ชั่วโมง {m} นาที")
+        st.write(f"**จำนวนวันเบี้ยเลี้ยง (ตามระเบียบ):** {per_diem_res['days_count']} วัน ({'กรณีค้างคืน' if st.session_state.is_overnight else 'กรณีไป-กลับ'})")
+        
+        st.write(f"**เบี้ยเลี้ยง:** {per_diem_res['days_count']} วัน x {per_diem_res['rate_per_day']} บาท, หักมื้ออาหาร {per_diem_res['provided_meals']} มื้อ")
         st.write(f"**ที่พัก:** {accom_res.get('remark', '-')}")
+        if meal_budget > 0:
+            m_res = st.session_state.training_meal_res
+            st.write(f"**งบอาหารอบรม:** อาหาร {m_res['meal_count']} มื้อ, ว่าง {m_res['snack_count']} มื้อ (รวม {meal_budget:,.2f} บาท)")
         if st.session_state.transport_items:
             st.write("**พาหนะ:**")
             for it in st.session_state.transport_items:

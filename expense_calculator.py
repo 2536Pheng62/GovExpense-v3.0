@@ -39,6 +39,19 @@ class ExpenseCalculator:
         "C9-C11": {"single": 2_700, "double": 1_500},   # Type A
     }
 
+    # --- อัตราค่าอาหารและอาหารว่าง (ฝึกอบรม) ---
+    # อ้างอิง: ระเบียบกระทรวงการคลังว่าด้วยการเบิกจ่ายค่าใช้จ่ายในการบริหารงานของส่วนราชการ
+    TRAINING_RATES = {
+        "state": {
+            "Type A": {"meal": 400, "snack": 35},
+            "Type B": {"meal": 200, "snack": 35},
+        },
+        "private": {
+            "Type A": {"meal": 700, "snack": 50},
+            "Type B": {"meal": 400, "snack": 50},
+        }
+    }
+
     def calculate_per_diem(
         self,
         start_time: datetime,
@@ -445,8 +458,37 @@ class ExpenseCalculator:
         
         return {
             "distance_km": distance_km,
-            "fare_distance": fare,
+            "fare_distance": fare_distance,
             "fare_traffic": traffic_minutes * 3.0,
             "surcharges": surcharges,
             "total_fare": total_fare
+        }
+
+    def calculate_training_meal_allowance(
+        self,
+        c_level: Literal["C1-C8", "C9-C11"],
+        venue: Literal["state", "private"],
+        meal_count: int = 0,
+        snack_count: int = 0
+    ) -> Dict[str, Any]:
+        """
+        คำนวณวงเงินค่าอาหารและอาหารว่างสำหรับการฝึกอบรม
+        """
+        training_type = "Type A" if c_level == "C9-C11" else "Type B"
+        rates = self.TRAINING_RATES[venue][training_type]
+        
+        meal_total = meal_count * rates["meal"]
+        snack_total = snack_count * rates["snack"]
+        grand_total = meal_total + snack_total
+        
+        return {
+            "training_type": training_type,
+            "venue": venue,
+            "meal_rate": rates["meal"],
+            "snack_rate": rates["snack"],
+            "meal_count": meal_count,
+            "snack_count": snack_count,
+            "meal_total": meal_total,
+            "snack_total": snack_total,
+            "grand_total": grand_total
         }
